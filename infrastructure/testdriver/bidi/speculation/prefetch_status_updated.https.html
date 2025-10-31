@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/common/dispatcher/dispatcher.js"></script>
+<script src="/common/utils.js"></script>
+<script src="/resources/testdriver.js?feature=bidi"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<script src="resources/bidi-speculation-helper.js"></script>
+
+<script>
+    promise_setup(async () => {
+        await waitForDocumentReady();
+        await test_driver.bidi.speculation.prefetch_status_updated.subscribe();
+    });
+
+    promise_test(async t => {
+
+        const receivedEvents = new Set();
+        const expectedStatuses = new Set(['pending', 'ready']);
+
+        const targetUrl = window.location.origin + "/infrastructure/testdriver/bidi/speculation/resources/target.html";
+
+        // Create a promise that resolves when we receive the 'ready' event
+        const readyEventPromise = new Promise((resolve, reject) => {
+            const removeHandler = test_driver.bidi.speculation.prefetch_status_updated.on((event) => {
+                receivedEvents.add(event);
+                
+                // When we receive the ready event, clean up and resolve
+                if (event.status === 'ready') {
+                    removeHandler();
+                    resolve();
+                }
+            });
+
+        });
+
+        // Create prefetch rules for our target page in resources
+        const speculationRules = {
+            prefetch: [{
+                source: "list", 
+                urls: [targetUrl]
+            }]
+        };
+    
+        // Use helper function to add both speculation rules and link
+        const { script, link } = addSpeculationRulesAndLink(speculationRules, targetUrl);
+        
+        // Await the ready event
+        await readyEventPromise;
+
+        // Assert that we received the expected events
+        const receivedStatuses = new Set([...receivedEvents].map(e => e.status));
+        assert_true(
+            receivedStatuses.size === expectedStatuses.size && 
+            [...expectedStatuses].every(status => receivedStatuses.has(status)),
+            'Should have received pending and ready events'
+        );
+
+    }, "prefetch_status_updated event subscription and structure validation");
+
+    promise_test(async t => {
+        
+        const receivedEvents = new Set();
+        const expectedStatuses = new Set(['pending', 'ready', 'success']);
+        let newWindow = null;
+
+        // Create prefetch rules for our target page in resources (different URL to avoid caching)
+        const targetUrl = window.location.origin + "/infrastructure/testdriver/bidi/speculation/resources/target.html?test=2";
+
+        // Create a promise that resolves when we receive the 'success' event
+        const successEventPromise = new Promise((resolve, reject) => {
+            const removeHandler = test_driver.bidi.speculation.prefetch_status_updated.on((event) => {
+                receivedEvents.add(event);
+                
+                // When we receive the ready event, navigate to trigger success
+                if (event.status === 'ready') {
+                    // Open the prefetched page in a new window to trigger success
+                    newWindow = window.open(event.url, '_blank');
+
+                } else if (event.status === 'success') {
+                    removeHandler();
+                    resolve();
+                }
+            });
+        });
+        
+        const speculationRules = {
+            prefetch: [{
+                source: "list", 
+                urls: [targetUrl]
+            }]
+        };
+        
+        // Use helper function to add both speculation rules and link
+        const { script, link } = addSpeculationRulesAndLink(speculationRules, targetUrl);
+    
+        // Await the success event
+        await successEventPromise;
+
+        // Assert that we received the expected events
+        const receivedStatuses = new Set([...receivedEvents].map(e => e.status));
+        assert_true(
+            receivedStatuses.size === expectedStatuses.size && 
+            [...expectedStatuses].every(status => receivedStatuses.has(status)),
+            'Should have received pending, ready, and success events'
+        );
+
+        t.add_cleanup(() => {
+            if (newWindow && !newWindow.closed) {
+                newWindow.close();
+            }
+        });
+
+    }, "prefetch_status_updated event with navigation to success");
+
+    promise_test(async t => {
+        const receivedEvents = new Set();
+        const expectedStatuses = new Set(['pending', 'failure']);
+
+        const errorUrl = window.location.origin + "/infrastructure/testdriver/bidi/speculation/resources/nonexistent-404-page.html";
+
+        // Create a promise that resolves when we receive the 'failure' event
+        const failureEventPromise = new Promise((resolve, reject) => {
+            const removeHandler = test_driver.bidi.speculation.prefetch_status_updated.on((event) => {
+                receivedEvents.add(event);
+                
+                // When we receive the failure event, we're done
+                if (event.status === 'failure') {
+                    removeHandler();
+                    resolve();
+                }
+            });
+        });
+        
+        const speculationRules = {
+            prefetch: [{
+                source: "list", 
+                urls: [errorUrl]
+            }]
+        };
+        
+        // Use helper function to add both speculation rules and link
+        const { script, link } = addSpeculationRulesAndLink(speculationRules, errorUrl);
+        
+        // Await the failure event
+        await failureEventPromise;
+
+        // Assert that we received the expected events
+        const receivedStatuses = new Set([...receivedEvents].map(e => e.status));
+        assert_true(
+            receivedStatuses.size === expectedStatuses.size && 
+            [...expectedStatuses].every(status => receivedStatuses.has(status)),
+            'Should have received pending and failure events'
+        );
+
+    }, "prefetch_status_updated event with prefetch failure", { timeout: 30000 });
+
+</script>
